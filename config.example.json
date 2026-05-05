@@ -1,0 +1,10 @@
+{
+  "name": "Your Name",
+  "role": "Software Engineer at Acme Corp",
+  "terms": ["React", "TypeScript", "Kubernetes", "PostgreSQL"],
+  "names": ["Alice", "Bob", "Charlie"],
+  "extra_context": [
+    "Currently working on Project Phoenix",
+    "Team members: Alice (frontend), Bob (backend)"
+  ]
+}
