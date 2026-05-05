@@ -127,7 +127,7 @@ The audio is transcribed **three times in parallel**:
 - `-l en` accurately captures English portions; Korean is mangled into roman letters.
 - `-l auto` gives whisper's best single-language guess of the whole clip.
 
-Gemini then receives all three transcripts and reconstructs the actual code-switched utterance — trusting each language's "expert" pass for its own portions. Wall-clock latency stays in the same ~3-4s range thanks to parallel execution; the trade-off is roughly 3× the Gemini token cost per dictation (still well within Gemini's free tier for normal personal use).
+Gemini then receives all three transcripts and reconstructs the actual code-switched utterance — trusting each language's "expert" pass for its own portions. The trade-off is roughly 3× the Gemini token cost per dictation (still well within Gemini's free tier for normal personal use). See [Performance notes](#performance-notes) below for an important caveat about wall-clock latency on Apple Silicon.
 
 ### Why an ensemble instead of one smarter model?
 
@@ -142,14 +142,55 @@ The ensemble approach keeps the audio on your device, leverages a model whisper 
 | Korean only | excellent | excellent |
 | English only | good | excellent |
 | Korean + English mixed | weak | **strong** |
-| Wall-clock latency | ~2-3s | ~3-4s |
-| CPU at peak | 1× whisper | 3× whisper |
+| Wall-clock latency (large-v3-turbo) | ~2-3s | ~5-7s* |
+| CPU/GPU at peak | 1× whisper | 3× whisper |
 | Gemini tokens/call | ~1× | ~3× |
 | Best for | Single-language speakers | Bilingual / code-switchers |
 
-Run `./install.sh --version=v1` or `./install.sh --version=v2` to switch at any time. Default is **v2**.
+Run `./install.sh --version=v1` or `./install.sh --version=v2` to switch at any time. Default is **v2**, but see the performance notes below — on Apple Silicon, **v1 with a smaller quantized model is often the better choice in practice.**
 
 > Although the examples here use **Korean + English**, the v2 ensemble works for any pair of languages whisper supports — just edit `v2/dictate.sh` and replace `-l ko` / `-l en` with the two language codes you mix (e.g. `-l es` and `-l en` for Spanish-English code-switching).
+
+---
+
+## Performance notes
+
+A bit of hard-won experience worth flagging up front:
+
+### The v2 ensemble is slower than expected on Apple Silicon
+
+The original v2 design assumed three `whisper-cli` processes would run truly in parallel. In practice, on Apple Silicon they don't — whisper.cpp uses Metal GPU acceleration, and the Metal command queue serializes work from competing processes. Three concurrent invocations end up sharing GPU time and memory bandwidth, so wall-clock latency is closer to **1.5–2× a single pass**, not the same. Combined with loading the 1.5 GB model into three separate process address spaces, v2 with `large-v3-turbo` can feel sluggish (~5-7s end-to-end) even on an M-series chip.
+
+If v2 feels slow, you have two clean options:
+
+**1. Switch to v1 (single-pass)** — Code-switching accuracy is lower, but Gemini post-correction recovers most of it for typical bilingual speech. Wall-clock latency on `large-v3-turbo` drops to ~2-3s.
+
+```bash
+./install.sh --version=v1
+```
+
+**2. Use a smaller quantized model** — The single biggest speed lever. `large-v3-turbo` (1.5 GB) is overkill for short dictations; `medium-q5_0` (~514 MB) is roughly 2-3× faster on Apple Silicon with negligible accuracy loss for everyday speech.
+
+```bash
+curl -L -o ~/whisper-models/ggml-medium-q5_0.bin \
+  "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium-q5_0.bin"
+
+# Then edit ~/.hammerspoon/dictate.sh:
+#   MODEL="$HOME/whisper-models/ggml-medium-q5_0.bin"
+```
+
+For most bilingual users on Apple Silicon, the sweet spot is **v1 + `medium-q5_0`** — sub-2-second latency with Gemini still cleaning up code-switching after the fact. Try it before reaching for v2.
+
+### Available model sizes
+
+| Model | Size | Relative speed | Accuracy |
+|---|---|---|---|
+| `large-v3-turbo` (default) | 1.5 GB | 1× | best |
+| `medium-q5_0` | 514 MB | ~2-3× faster | nearly identical for everyday speech |
+| `small-q5_0` | ~190 MB | ~5× faster | slightly weaker, fine for short clips |
+| `base` | ~150 MB | ~7× faster | OK for short commands, weaker on jargon |
+
+All are drop-in: download into `~/whisper-models/` and update the `MODEL=` line in `dictate.sh`.
 
 ---
 
