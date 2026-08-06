@@ -1,444 +1,209 @@
 # Hammerspoon Dictation
 
-> Voice dictation **anywhere** on macOS — press `Ctrl+D`, speak, and your words appear in whatever app you were using. Built specifically for **bilingual users** who mix languages mid-sentence (Korean + English, Spanish + English, etc.).
+> Voice dictation **anywhere** on macOS — press `Ctrl+D`, speak, and your words appear in whatever app you were using. No web app, no upload to a SaaS, no clicking a microphone icon. Just a keystroke.
 
-[![macOS](https://img.shields.io/badge/macOS-12%2B-black?logo=apple)](https://www.apple.com/macos/)
+[![macOS](https://img.shields.io/badge/macOS-26%2B%20(v3)%20%7C%2012%2B%20(v1)-black?logo=apple)](https://www.apple.com/macos/)
 [![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-recommended-success)](https://support.apple.com/en-us/HT211814)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ```
 You hold:  Ctrl + D
-You say:   "내일 meeting 끝나고 final report 보내줄 수 있어?"
-You get:   "내일 meeting 끝나고 final report 보내줄 수 있어?"
-           ↑ pasted into Slack / Mail / VS Code / Notes / wherever
+You say:   "내일 미팅 끝나고 리포트 보내줄 수 있어?"
+You get:   pasted into Slack / Mail / VS Code / Notes / wherever
 ```
 
-That's it. No web app, no upload to a SaaS, no clicking a microphone icon. Just a keystroke.
+**v3 (current)** transcribes on Apple's own on-device Speech framework: **~0.35s**, no model file to download, no API key, no network, no cost. If you are on macOS 26 or later, use v3.
 
 ---
 
 ## Why this project exists
 
-Built-in macOS dictation is fine if you only speak one language. But the moment you say something like:
+macOS has built-in dictation, but it is modal: you click into a field, trigger it, and it owns the input while it runs. This tool is a hotkey that drops text wherever your cursor already is, in any app, and then gets out of the way.
 
-> "I scheduled the **kickoff** for **다음 주 화요일**, can you forward the **agenda** to the team?"
-
-… most dictation tools collapse. They either pick one language and phonetically mangle the other ("미팅", "다음 주 hwa-yo-il"), or they refuse to transcribe at all and leave you re-typing the bilingual half by hand.
-
-If you're a bilingual researcher, engineer, student, or anyone whose daily writing is a 50/50 mix of two languages, you've felt this pain. **This tool is the answer.**
-
-It runs locally on your Mac, works across every macOS app, and uses an ensemble approach to actually preserve code-switching — instead of fighting it.
+It also does the boring-but-necessary parts that a five-line script skips: it refuses to paste when you did not actually say anything, it does not clobber your clipboard, it cancels cleanly, and it cannot get stuck in a state where the hotkey stops responding.
 
 ---
 
 ## Who is this for?
 
-- **Bilingual professionals** writing emails, Slack messages, or docs that naturally mix two languages
-- **Researchers and academics** dictating notes, paper drafts, or feedback to students/collaborators across language boundaries
-- **Software engineers** who want a fast hotkey-driven way to dictate commit messages, PR comments, or code comments without leaving their editor
-- **Privacy-conscious users** who don't want their voice uploaded to a third-party server (whisper runs entirely on-device)
-- **Anyone tired of macOS's built-in dictation** and looking for something that's *actually* good with proper nouns, technical jargon, and accented English
-
-If your daily life involves typing into Slack, Mail, Outlook, VS Code, Notion, Obsidian, ChatGPT, Claude, the terminal — basically *any text field on macOS* — and you wish you could just talk instead, this is for you.
+- Anyone who types into Slack, Mail, Outlook, VS Code, Notion, Obsidian, ChatGPT, Claude, or a terminal all day and would rather talk
+- **Privacy-conscious users** — v3 and v1's transcription stage run entirely on-device
+- People who want dictation available in **every** app behind one consistent keystroke
 
 ---
 
-## What makes it different
+## Honest comparison
 
-| | macOS built-in | Whisper alone | ChatGPT voice | **Hammerspoon Dictation** |
-|---|---|---|---|---|
-| Works in any app | Yes | No (CLI only) | No (browser only) | **Yes** |
-| Hotkey-triggered | Yes | No | No | **Yes** |
-| Mixed languages in one sentence | Poor | Limited | OK | **Strong (v2 ensemble)** |
-| Audio stays on-device | No (Apple) | **Yes** | No (OpenAI) | **Yes** (only text → Gemini) |
-| Knows your jargon / colleagues' names | No | No | No | **Yes** (config file) |
-| Cost | Free | Free | Subscription | Free + ~pennies/month for Gemini |
-| Open source | No | Yes | No | **Yes (MIT)** |
+| | macOS built-in | Whisper alone | **This tool (v3)** |
+|---|---|---|---|
+| Works in any app | Modal / per-field | No (CLI only) | **Yes** |
+| Hotkey-triggered | Partly | No | **Yes** |
+| Speed (short utterance) | Fast | ~1.6s | **~0.35s** |
+| Audio stays on-device | Yes | **Yes** | **Yes** |
+| Needs a model download | No | Yes (0.5-1.5 GB) | **No** |
+| Cost | Free | Free | **Free** |
+| Mixed languages in one sentence | Poor | Poor | **Poor** (see below) |
+| Open source | No | Yes | **Yes (MIT)** |
 
-The "knows your jargon" part is underrated. Whisper alone will hear an unfamiliar collaborator's name and butcher it phonetically (e.g. "Jiwon" → "Jee Won" → "Gee one"). With a tiny config listing your common collaborators, projects, and technical terms, Gemini fixes those automatically.
+### About code-switching — read this before you install
 
----
+Earlier versions of this project advertised code-switching (mixing two languages mid-sentence) as the headline feature. **That claim did not survive measurement, and it has been removed.**
 
-## Real-world examples
+What was actually measured on an M-series Mac (2026-08):
 
-Typical situations the tool handles well:
+- **Whisper locked to one language** splits foreign words phonetically. Speaking "여기에 answer key가 없는데" with `-l ko` yields `answer 키` — half the English phrase transliterated.
+- **`-l auto` changes nothing.** Whisper commits to one dominant language per segment; auto-detect just picks the winner.
+- **The v2 "3-way ensemble" does not work.** Running `-l ko`, `-l en`, and `-l auto` in parallel and merging was the previous default. The English pass on Korean audio does not report failure — it **invents fluent, grammatical English nonsense** (real output: *"So, I'm going to use it like this. Then, I'm going to use it in English, so I'm going to use it in English."*). Because the wrong answer is well-formed, there is no signal a merge step can use to tell which pass was right. The premise was wrong, not the implementation.
+- **It was also slower**, not faster: 7.94s for three parallel passes vs 1.56s for one, because whisper.cpp's Metal command queue serializes work across processes.
+- **The macOS 26 Speech framework transliterates too**, for the same architectural reason.
 
-**Email mixing both languages**
-> Spoken: "다음 미팅에서 final approval 관련해서 팀에 confirm 받아야 해요"
-> Pasted: "다음 미팅에서 final approval 관련해서 팀에 confirm 받아야 해요"
+So: **if you speak one language per utterance, this tool is excellent. If you routinely mix two languages inside one sentence, no version here solves that.** The honest fix is an LLM post-correction step that restores transliterated words — see [Optional: LLM correction](#optional-llm-correction). That requires a cloud API, which is why it is not the default.
 
-**Slack message in English**
-> Spoken: "I think we should refactor the auth middleware before merging the PR"
-> Pasted: "I think we should refactor the auth middleware before merging the PR"
-
-**Note about an English paper, written in Korean**
-> Spoken: "이 paper의 conclusion에서 4 dimensions로 정의한 부분이 핵심이야"
-> Pasted: "이 paper의 conclusion에서 4 dimensions로 정의한 부분이 핵심이야"
-
-**Quick reply in the terminal**
-> Spoken: "git commit -m fix the regex bug in the parser"
-> Pasted: `git commit -m fix the regex bug in the parser`
-
-In every case, the cursor is already where you want the text. You don't switch apps, you don't click anything — you just keep working.
+If you want to dig into the code-switching ASR problem itself, [HiKE (EACL 2026)](https://aclanthology.org/2026.findings-eacl.33/) is a good starting point; it is an open research problem, not a configuration mistake.
 
 ---
 
 ## How It Works
 
-This repo ships **two pipelines** you can pick between. Both share the same hotkey + overlay UI; only the transcription stage differs.
+Three pipelines ship here. All share the same hotkey and overlay UI; only the transcription stage differs.
 
-### v1 — Single Whisper + Gemini correction (original)
-
-```
-Ctrl+D (start) ──> sox records audio ──> Ctrl+D (stop)
-                                              │
-                                              ▼
-                                    whisper-cli -l ko (local, ~2s)
-                                              │
-                                              ▼
-                                    Gemini 2.0 Flash (text fix)
-                                              │
-                                              ▼
-                                    Auto-paste into original window
-```
-
-Fast and simple. Works great for **monolingual** speech (pure Korean *or* pure English). Struggles with sentences that mix the two — whisper is forced into one language and phonetically munges the other (e.g. "meeting" → "미팅").
-
-### v2 — 3-way ensemble (default, better for code-switching)
+### v3 — macOS Speech framework (recommended, default)
 
 ```
 Ctrl+D (start) ──> sox records audio ──> Ctrl+D (stop)
                                               │
-                            ┌─────────────────┼─────────────────┐
-                            ▼                 ▼                 ▼
-                  whisper-cli -l ko   whisper-cli -l en   whisper-cli -l auto
-                            │                 │                 │
-                            └─────────────────┼─────────────────┘
                                               ▼
-                            Gemini 2.0 Flash (merge 3 transcripts)
+                                    energy gate (sox RMS)
                                               │
                                               ▼
-                                Auto-paste into original window
+                              mac-stt (SpeechAnalyzer, ~0.35s)
+                                              │
+                                              ▼
+                                   paste into source window
 ```
 
-The audio is transcribed **three times in parallel**:
+`mac-stt` is a small Swift CLI wrapping `SpeechAnalyzer` / `SpeechTranscriber` (macOS 26+). Fully offline, no API key, no model file. `whisper-cli` remains an automatic fallback if the locale asset is missing.
 
-- `-l ko` accurately captures Korean portions; English is mangled into Hangul.
-- `-l en` accurately captures English portions; Korean is mangled into roman letters.
-- `-l auto` gives whisper's best single-language guess of the whole clip.
+Requires **macOS 26+** and the Swift toolchain (ships with Xcode Command Line Tools) to compile once.
 
-Gemini then receives all three transcripts and reconstructs the actual code-switched utterance — trusting each language's "expert" pass for its own portions. The trade-off is roughly 3× the Gemini token cost per dictation (still well within Gemini's free tier for normal personal use). See [Performance notes](#performance-notes) below for an important caveat about wall-clock latency on Apple Silicon.
+### v1 — Single Whisper + optional Gemini correction
 
-### Why an ensemble instead of one smarter model?
+```
+Ctrl+D ──> sox ──> whisper-cli -l <lang> (~1.6s) ──> optional Gemini text fix ──> paste
+```
 
-Whisper is brilliant at single-language audio but has a hard architectural limit: it commits to one language token at the start of each segment. Forcing `-l auto` doesn't fix code-switching — it just makes whisper guess which single language wins. Larger commercial models (gpt-4o-transcribe, Gemini-direct-audio) handle code-switching better, but they require sending your raw audio to the cloud.
+Works on **macOS 12+**. Use this if you are not on macOS 26 yet. Needs a whisper.cpp model in `~/whisper-models/`.
 
-The ensemble approach keeps the audio on your device, leverages a model whisper is *already* very good at (single-language transcription), and uses an LLM only to combine three text outputs. It's strictly cheaper, more private, and surprisingly accurate.
+### v2 — 3-way ensemble (deprecated, do not use)
 
-### Choosing a version
+Kept only as a record of a failed approach. See [About code-switching](#about-code-switching--read-this-before-you-install) for why it does not work and is also slower.
 
-| | v1 | v2 |
+---
+
+## What v3 gets right beyond transcription
+
+These are the failure modes that make a dictation tool annoying in daily use. Each was found by measurement, not guesswork:
+
+| Behavior | Why it matters |
+|---|---|
+| **Energy gate before transcribing** | Both whisper and the Apple engine invent text from near-silence — whisper reliably emits `감사합니다` (Korean "thank you") on a silent recording. An accidental double-tap would otherwise paste words you never said. Gated on `sox` RMS with peak-amplitude and byte-size fallbacks, and it logs loudly rather than silently disabling itself. |
+| **Clipboard is preserved** | Dictation should not cost you whatever you had copied. Saved and restored around the paste, with a guard so two dictations in quick succession cannot chain and restore the wrong value. |
+| **PID-based stop** | Signalling `rec` via `pkill` pattern-matching loses the signal if you double-tap before `rec` has spawned, which hangs the tool permanently. v3 signals the exact PID, with a retry. |
+| **Watchdog** | A hung transcription can no longer leave the hotkey dead until a manual reload. |
+| **ESC cancels** | Discards the recording without transcribing or pasting. |
+| **Focus-verified paste** | Retries until the target window is genuinely focused, then falls back to leaving text on the clipboard with an alert — instead of pasting into whatever window happened to be in front. |
+| **Errors say what broke** | A missing dependency reports itself as a missing dependency, not as "no speech detected". |
+| **Recording cap** | 5 minutes, so a forgotten session cannot fill `/tmp`. |
+
+---
+
+## Install
+
+```bash
+git clone https://github.com/sunjinpak/hammerspoon-dictation.git
+cd hammerspoon-dictation
+./install.sh                  # v3 (default, macOS 26+)
+./install.sh --version=v1     # v1 (macOS 12+, needs a whisper model)
+```
+
+Prerequisites:
+
+```bash
+brew install hammerspoon sox
+# v1 only:
+brew install whisper-cpp
+mkdir -p ~/whisper-models && curl -L -o ~/whisper-models/ggml-large-v3-turbo.bin \
+  "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin"
+```
+
+Then grant Hammerspoon **Microphone** and **Accessibility** permission in System Settings → Privacy & Security, and reload Hammerspoon.
+
+### Configuration
+
+Environment variables (all optional):
+
+| Variable | Default | Purpose |
 |---|---|---|
-| Korean only | excellent | excellent |
-| English only | good | excellent |
-| Korean + English mixed | weak | **strong** |
-| Wall-clock latency (large-v3-turbo) | ~2-3s | ~5-7s* |
-| CPU/GPU at peak | 1× whisper | 3× whisper |
-| Gemini tokens/call | ~1× | ~3× |
-| Best for | Single-language speakers | Bilingual / code-switchers |
+| `DICTATE_LOCALE` | `ko-KR` | Speech locale for v3. Set to `en-US` etc. |
+| `DICTATE_MIN_RMS` | `0.003` | Silence threshold. Measured reference: room silence ≈ 0.00015, speech ≈ 0.05. |
+| `DICTATE_MAX_SECONDS` | `300` | Recording cap. |
+| `DICTATE_DEBUG` | `0` | Set to `1` to log to `dictate.log`. |
 
-Run `./install.sh --version=v1` or `./install.sh --version=v2` to switch at any time. Default is **v2**, but see the performance notes below — on Apple Silicon, **v1 with a smaller quantized model is often the better choice in practice.**
+> **Important:** Hammerspoon runs scripts with a minimal `PATH` and reads neither `~/.zshrc` nor `~/.zprofile`. Anything you rely on must be on an absolute path or added to `PATH` inside the script (v3 does this). Environment variables must be set via `launchctl setenv`, not your shell profile — a variable exported in `~/.zshrc` is **invisible** to the dictation pipeline. This is a genuinely easy way to build a feature that silently never runs.
 
-> Although the examples here use **Korean + English**, the v2 ensemble works for any pair of languages whisper supports — just edit `v2/dictate.sh` and replace `-l ko` / `-l en` with the two language codes you mix (e.g. `-l es` and `-l en` for Spanish-English code-switching).
+To change which apps get the `<...>` wrapper, edit the `bracketApps` table in `init.lua`.
+
+---
+
+## Optional: LLM correction
+
+If you mix two languages in one sentence and want transliterated words restored (`앤서 키` → `answer key`), add an LLM pass after transcription. Measured latencies for one short sentence:
+
+| Approach | Latency | Verdict |
+|---|---|---|
+| Gemini 2.5 Flash (text-only correction) | **0.6s** | Works. Needs a cloud API. |
+| Gemini 2.5 Flash (audio-native, replaces ASR) | 2.9s | Most accurate on code-switching. Sends audio off-device. |
+| Local LLM via ollama (2.4b-32b) | 0.4s-134s | **Failed at every size tested.** |
+| Coding-agent CLI | 14-20s | Accurate but far too slow, and non-deterministic. |
+
+Local models failed in instructive ways: a 2.4b model read an imperative sentence as an instruction and wrote an entire email in reply; a 7.8b model silently changed the speaker's register and introduced typos; a 32b model took over 100s per sentence and still mistranslated. The task looks trivial but is mostly about **restraint** — knowing what not to touch — and small models are weakest exactly there.
+
+Cost for the text-only path is roughly $0.40/month at 50 dictations/day. Note that free API tiers may use your input for training; if you dictate anything sensitive, use a paid tier or skip this step.
+
+This is deliberately not wired in by default: v3's whole point is that it needs nothing but your Mac.
 
 ---
 
 ## Performance notes
 
-A bit of hard-won experience worth flagging up front:
+Measured on an M-series Mac, short utterance, 2026-08:
 
-### The v2 ensemble is slower than expected on Apple Silicon
+| Engine | Latency | On silence |
+|---|---|---|
+| **macOS 26 Speech (v3)** | **0.35s** | Returns nothing (correct) |
+| whisper `large-v3-turbo` | 1.56s | Hallucinates `감사합니다` |
+| whisper `medium-q5_0` | 1.07s | Same hallucination |
+| whisper 3-way ensemble (v2) | 7.94s | Same, plus fabricated English |
 
-The original v2 design assumed three `whisper-cli` processes would run truly in parallel. In practice, on Apple Silicon they don't — whisper.cpp uses Metal GPU acceleration, and the Metal command queue serializes work from competing processes. Three concurrent invocations end up sharing GPU time and memory bandwidth, so wall-clock latency is closer to **1.5–2× a single pass**, not the same. Combined with loading the 1.5 GB model into three separate process address spaces, v2 with `large-v3-turbo` can feel sluggish (~5-7s end-to-end) even on an M-series chip.
+No whisper flag suppresses the silence hallucination: `--suppress-nst`, `--no-fallback`, and `--no-speech-thold 0.3` were all tested and all still produced text on a silent file. The energy gate is not optional.
 
-If v2 feels slow, you have two clean options:
-
-**1. Switch to v1 (single-pass)** — Code-switching accuracy is lower, but Gemini post-correction recovers most of it for typical bilingual speech. Wall-clock latency on `large-v3-turbo` drops to ~2-3s.
-
-```bash
-./install.sh --version=v1
-```
-
-**2. Use a smaller quantized model** — The single biggest speed lever. `large-v3-turbo` (1.5 GB) is overkill for short dictations; `medium-q5_0` (~514 MB) is roughly 2-3× faster on Apple Silicon with negligible accuracy loss for everyday speech.
-
-```bash
-curl -L -o ~/whisper-models/ggml-medium-q5_0.bin \
-  "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium-q5_0.bin"
-
-# Then edit ~/.hammerspoon/dictate.sh:
-#   MODEL="$HOME/whisper-models/ggml-medium-q5_0.bin"
-```
-
-For most bilingual users on Apple Silicon, the sweet spot is **v1 + `medium-q5_0`** — sub-2-second latency with Gemini still cleaning up code-switching after the fact. Try it before reaching for v2.
-
-### Available model sizes
-
-| Model | Size | Relative speed | Accuracy |
-|---|---|---|---|
-| `large-v3-turbo` (default) | 1.5 GB | 1× | best |
-| `medium-q5_0` | 514 MB | ~2-3× faster | nearly identical for everyday speech |
-| `small-q5_0` | ~190 MB | ~5× faster | slightly weaker, fine for short clips |
-| `base` | ~150 MB | ~7× faster | OK for short commands, weaker on jargon |
-
-All are drop-in: download into `~/whisper-models/` and update the `MODEL=` line in `dictate.sh`.
-
----
-
-## Privacy
-
-- **Audio never leaves your Mac.** Recording is done by `sox` to `/tmp/hs_dictate.wav`, transcribed by `whisper.cpp` running locally, then deleted on the next dictation.
-- **Only the resulting text** is sent to Gemini for correction/merging — never the raw audio.
-- **Your context config** (`dictate-config.json`) is local only and is **not** in the git repo (gitignored). The first dictation per session sends a small system prompt with the names/terms you've configured; nothing else.
-- If you don't set `GEMINI_API_KEY`, the tool degrades gracefully to whisper's raw output. **Nothing leaves your Mac at all** in that mode.
-
----
-
-## Requirements
-
-- macOS 12 (Monterey) or newer
-- Apple Silicon strongly recommended (M1/M2/M3/M4) — Whisper on Intel works but is much slower
-- ~2 GB free disk space (for the Whisper large-v3-turbo model)
-- A working microphone (built-in is fine)
-- [Homebrew](https://brew.sh)
-- [Gemini API key](https://aistudio.google.com/apikey) — free tier is plenty for personal use, optional
-
----
-
-## Quick Start
-
-```bash
-git clone https://github.com/sunjinpak/hammerspoon-dictation.git
-cd hammerspoon-dictation
-chmod +x install.sh
-./install.sh                    # installs v2 by default
-# or:
-./install.sh --version=v1       # if you only speak one language at a time
-```
-
-The installer will:
-1. Install dependencies via Homebrew (`sox`, `whisper-cpp`, Hammerspoon)
-2. Download the Whisper large-v3-turbo model (~1.5 GB) into `~/whisper-models/`
-3. Copy the chosen version's scripts to `~/.hammerspoon/`
-
-Then set your Gemini API key:
-
-```bash
-# Add to ~/.zshrc (or ~/.bash_profile)
-export GEMINI_API_KEY="your-api-key-here"
-```
-
-Open Hammerspoon from Applications, grant **Accessibility** permissions when prompted (System Settings → Privacy & Security → Accessibility), and you're ready.
-
-**First dictation:** put your cursor in any text field, press `Ctrl+D`, speak, press `Ctrl+D` again. Your text appears.
-
----
-
-## Configuration
-
-### Personal context (recommended)
-
-Edit `~/.hammerspoon/dictate-config.json`. A `config.example.json` template is included in the repo — copy it and fill in your own details:
-
-```json
-{
-  "name": "Your Name",
-  "role": "Software Engineer at Acme Corp",
-  "terms": [
-    "React", "TypeScript", "Kubernetes", "PostgreSQL",
-    "code-switching", "Hammerspoon", "whisper.cpp"
-  ],
-  "names": [
-    "Alice", "Bob", "Charlie",
-    "Jiwon", "Minji"
-  ],
-  "extra_context": [
-    "Currently working on Project Phoenix",
-    "Team members: Alice (frontend), Bob (backend)",
-    "Frequently dictates in mixed languages"
-  ]
-}
-```
-
-This is the single biggest accuracy win. The LLM uses this to fix proper nouns and technical terms that Whisper consistently mangles. Update it as your work changes — projects, collaborators, jargon. Your config stays on your Mac and is never committed to this repo.
-
-### Hotkey
-
-Edit `init.lua`:
-
-```lua
--- Default
-hs.hotkey.bind({"ctrl"}, "d", function() ... end)
-
--- Examples
-hs.hotkey.bind({"cmd", "shift"}, "d", function() ... end)   -- Cmd+Shift+D
-hs.hotkey.bind({"alt"}, "space", function() ... end)        -- Option+Space
-hs.hotkey.bind({"fn"}, "f5", function() ... end)            -- Fn+F5
-```
-
-After editing, reload with **`Cmd+Alt+Ctrl+R`**.
-
-### Whisper language (v1 only)
-
-v2 ignores `DICTATE_LANG` (it always runs ko/en/auto). For v1:
-
-```bash
-export DICTATE_LANG="ko"      # default
-export DICTATE_LANG="en"      # English only
-export DICTATE_LANG="auto"    # let whisper pick
-```
-
-If you mix languages often, just use v2 instead.
-
-### Different language pairs (v2)
-
-Edit `v2/dictate.sh` and change the two language codes:
-
-```zsh
-# Default: Korean + English
-whisper-cli ... -l ko ... &
-whisper-cli ... -l en ... &
-
-# Spanish + English
-whisper-cli ... -l es ... &
-whisper-cli ... -l en ... &
-
-# Mandarin + English
-whisper-cli ... -l zh ... &
-whisper-cli ... -l en ... &
-```
-
-Then edit `v2/dictate-fix.py`'s prompt to mention the actual language names instead of "Korean" / "English".
-
----
-
-## File Structure
-
-```
-hammerspoon-dictation/      (this repo)
-├── init.lua              # Hammerspoon hotkey + overlay UI (shared)
-├── install.sh            # Installer (--version=v1|v2)
-├── config.example.json   # Template for ~/.hammerspoon/dictate-config.json
-├── v1/
-│   ├── dictate.sh        # v1: single whisper -l ko + Gemini correction
-│   └── dictate-fix.py
-└── v2/
-    ├── dictate.sh        # v2: 3-way parallel whisper + Gemini merge
-    └── dictate-fix.py
-
-~/.hammerspoon/             (after install)
-├── init.lua              # copied from repo
-├── dictate.sh            # copied from chosen version's folder
-├── dictate-fix.py        # copied from chosen version's folder
-└── dictate-config.json   # your personal context (not in repo)
-```
-
----
-
-## Tips & tricks
-
-- **Speak naturally.** You don't have to enunciate or pause between languages. The ensemble handles "I'll send 그거 by tomorrow morning" just as well as cleanly-separated phrases.
-- **Short clips dictate faster.** Whisper latency is roughly proportional to audio length, not text length. A 5-second utterance is better than a 30-second monologue.
-- **The overlay tells you the state.** Red = recording, blue = processing. If it stays blue for more than ~10 seconds, something stalled — reload with `Cmd+Alt+Ctrl+R`.
-- **Curse-words work.** Whisper transcribes them faithfully. The Gemini correction step doesn't sanitize anything by default.
-- **Confidential text:** if you don't want even text sent to Gemini, just unset `GEMINI_API_KEY`. The tool will fall back to raw whisper output, which never leaves your Mac.
-- **Combine with a clipboard manager** (Raycast, Maccy, etc.) for a quick history of recent dictations.
+**Bluetooth microphones clip the first ~1s** of speech: the HFP/SCO profile switch adds ~1.0s of device-open latency, during which `rec` writes nothing while the overlay already shows "Recording". Neither an idle warm-keeper process nor switching to ffmpeg avfoundation fixes it. Use a wired or USB microphone. A single persistent capture stream would be the real fix, and is not implemented.
 
 ---
 
 ## Troubleshooting
 
-**"No speech detected"**
-Microphone may be muted, or you spoke for less than ~1 second. Check System Settings → Privacy & Security → Microphone and confirm Hammerspoon has access.
-
-**Pasting goes to the wrong window**
-The tool focuses the window that was active when you *started* recording. If you switched windows mid-recording, it'll still paste into the original. This is intentional — but if you want the current window, change `sourceWindow:focus()` to `nil` in `init.lua`.
-
-**Correction not working / output is rough**
-- Check `echo $GEMINI_API_KEY` in your shell. If empty, add to `~/.zshrc`.
-- Verify the key works: `curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=$GEMINI_API_KEY" -d '{"contents":[{"parts":[{"text":"hello"}]}]}'`
-- Free tier has a daily quota. If you hit it, the tool falls back to raw whisper output.
-
-**Hammerspoon overlay frozen on "Processing..."**
-- `Cmd+Alt+Ctrl+R` to reload Hammerspoon
-- Or kill the recording process: `pkill -INT -f 'rec /tmp/hs_dictate.wav'`
-
-**Whisper output is in the wrong language**
-- v1: set `DICTATE_LANG` correctly, or switch to v2.
-- v2: this is unusual — open an issue with a sample audio file.
-
-**Hotkey doesn't fire**
-- Confirm Hammerspoon is running (menu bar icon)
-- Check Accessibility permission: System Settings → Privacy & Security → Accessibility → Hammerspoon (toggle on)
-- Another app might have grabbed `Ctrl+D` — change the hotkey in `init.lua`
-
-**Slow transcription on Intel Macs**
-The large-v3-turbo model is ~1.5 GB and was tuned for Apple Silicon Metal acceleration. On Intel, swap to a smaller model:
-```bash
-curl -L -o ~/whisper-models/ggml-base.bin \
-  "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin"
-# Then edit dictate.sh: MODEL="$HOME/whisper-models/ggml-base.bin"
-```
-Accuracy drops, but transcription becomes 5-10× faster.
-
----
-
-## FAQ
-
-**Is this affiliated with Hammerspoon, OpenAI, or Google?**
-No. This is an independent open-source project. Hammerspoon is the macOS automation framework it's built on, Whisper is OpenAI's open-weight model (running locally via [whisper.cpp](https://github.com/ggerganov/whisper.cpp)), and Gemini is Google's LLM (called via API for text correction).
-
-**How much does Gemini cost?**
-For typical personal use (a few dozen dictations a day), it stays within the free tier indefinitely. Each v2 dictation uses ~1-2k tokens of input + a few hundred tokens of output. Free tier as of 2026: 15 RPM, 1 M TPM, 1.5k requests/day on `gemini-2.0-flash`.
-
-**Can I use OpenAI / Claude / a local LLM instead of Gemini?**
-Yes — `dictate-fix.py` is a single short Python script. Replace the Gemini API call with whatever HTTP endpoint you prefer. PRs welcome.
-
-**Does this work on Linux / Windows?**
-Not as-is. Hammerspoon is macOS-only. The general approach (record → whisper → LLM-merge → paste) is portable; equivalent tools on Linux would be `xdotool` or `wtype`, on Windows `AutoHotkey` or `nircmd`.
-
-**Why Hammerspoon and not a Swift menu-bar app?**
-Hammerspoon is hackable — the entire tool is ~100 lines of Lua + 2 short shell/Python scripts. You can read all of it in 10 minutes and customize anything. A Swift app would be more polished but harder to fork.
-
-**Can I record longer than ~30 seconds?**
-Yes, there's no built-in time limit. Practical limit is the Whisper context window (~30s of audio is the model's optimal range). Longer clips work but accuracy can degrade.
-
-**My language isn't Korean. Will v2 still help me?**
-Yes. The ensemble approach is language-agnostic — it works for any language pair Whisper supports (~100 languages). See "Different language pairs" above.
-
----
-
-## Contributing
-
-Issues and PRs welcome. Some areas where help would be especially appreciated:
-
-- Testing v2 with other code-switching language pairs (Spanish-English, Mandarin-English, French-English, Hindi-English, etc.) and tuning the merge prompt
-- A small benchmark suite (sample audio + expected transcript) so we can measure regressions
-- A Swift port for users who don't want the Hammerspoon dependency
-- A `--version=v3` experiment that uses Gemini's direct-audio mode as a fourth ensemble member
-
-If you build something cool on top of this, please drop a link in the issues — I'd love to see it.
-
----
-
-## Acknowledgments
-
-- [Hammerspoon](https://www.hammerspoon.org/) — the macOS automation framework that makes the hotkey + overlay possible
-- [whisper.cpp](https://github.com/ggerganov/whisper.cpp) — Georgi Gerganov's blazing-fast C++ port of OpenAI Whisper
-- [Google Gemini](https://ai.google.dev/) — fast, cheap, and surprisingly good at multilingual text correction
-- The bilingual community everywhere who put up with bad dictation tools long enough to inspire this one
+| Symptom | Fix |
+|---|---|
+| "No speech detected" every time | Check Hammerspoon has Microphone permission. Run `DICTATE_DEBUG=1` and read `dictate.log`. |
+| "Dictation error: rec (SoX) not found" | `brew install sox`, or add its directory to `PATH` inside `dictate.sh`. |
+| Stuck on "Processing..." | The watchdog resets after 330s; `Cmd+Alt+Ctrl+R` reloads immediately. |
+| Kill a stuck recording | `kill -INT $(cat /tmp/hs_dictate.pid)` |
+| First second of speech missing | You are on a Bluetooth mic. See Performance notes. |
+| Rebuild `mac-stt` | `swiftc -O mac-stt.swift -o mac-stt` |
 
 ---
 
 ## License
 
-[MIT](LICENSE) — do whatever you want with it. If it saves you typing, that's payment enough.
+MIT
