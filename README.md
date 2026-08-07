@@ -151,7 +151,7 @@ Environment variables (all optional):
 
 > **Important:** Hammerspoon runs scripts with a minimal `PATH` and reads neither `~/.zshrc` nor `~/.zprofile`. Anything you rely on must be on an absolute path or added to `PATH` inside the script (v3 does this). Environment variables must be set via `launchctl setenv`, not your shell profile — a variable exported in `~/.zshrc` is **invisible** to the dictation pipeline. This is a genuinely easy way to build a feature that silently never runs.
 
-To change which apps get the `<...>` wrapper, edit the `bracketApps` table in `init.lua`.
+Dictated text is pasted wrapped in `<...>` in every app. Set `wrapInBrackets = false` in `init.lua` to paste plain text instead.
 
 ---
 

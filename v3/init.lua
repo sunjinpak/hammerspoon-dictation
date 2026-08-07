@@ -13,21 +13,10 @@ local dictatePidFile = "/tmp/hs_dictate.pid"
 local dictateWatchdog = nil
 local dictateCancelled = false
 
--- Terminals get the <...> wrapper (handy for CLI agents that read inline
--- comments); everywhere else pastes plain text. Add your own bundle IDs here,
--- or empty the table to disable wrapping entirely.
-local bracketApps = {
-    ["com.apple.Terminal"] = true,
-    ["com.googlecode.iterm2"] = true,
-    ["dev.warp.Warp-Stable"] = true,
-    ["net.kovidgoyal.kitty"] = true,
-    ["com.github.wez.wezterm"] = true,
-}
-
-local function wantsBrackets(win)
-    local app = win and win:application()
-    return app ~= nil and bracketApps[app:bundleID()] == true
-end
+-- Dictated text is pasted as <...> in every app. The wrapper marks the text as
+-- spoken input, which CLI agents read as an inline comment and which stays easy
+-- to spot (and delete) anywhere else. Set to false to paste plain text.
+local wrapInBrackets = true
 
 -- Stop `rec` by the PID it wrote rather than by pkill pattern: a fast double-tap
 -- can fire before `rec` exists, and a pattern-matched signal is then lost.
@@ -191,7 +180,7 @@ hs.hotkey.bind({"ctrl"}, "d", function()
             return
         end
 
-        if wantsBrackets(sourceWindow) then
+        if wrapInBrackets then
             text = "<" .. text .. ">"
         end
 
