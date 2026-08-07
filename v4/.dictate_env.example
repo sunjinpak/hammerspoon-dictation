@@ -1,0 +1,4 @@
+# Copy to .dictate_env next to dictate.sh, then chmod 600.
+# Read by absolute path -- NOT from your shell rc, because Hammerspoon's
+# non-interactive zsh reads neither ~/.zshrc nor ~/.zprofile.
+GEMINI_API_KEY=your-key-here

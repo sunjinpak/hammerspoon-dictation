@@ -1,0 +1,9 @@
+# glossary/terms.tsv -- confirmed wrong<TAB>right pairs.
+# review.py appends here automatically; you can also edit by hand.
+# Left side must be 2+ characters: a one-syllable Korean entry would fire
+# inside unrelated words.
+앤서 키	answer key
+어사인먼트	assignment
+컷오프	cut-off
+위드인	within
+비트인	between

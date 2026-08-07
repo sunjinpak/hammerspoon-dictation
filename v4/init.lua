@@ -1,0 +1,268 @@
+-- Hammerspoon Config
+-- Dictation: Ctrl+D to record -> macOS 26 Speech (offline) -> auto paste
+--   Ctrl+D again = stop and paste. ESC while recording = cancel.
+
+require("hs.ipc")
+require("sd-backup")  -- DJI Pocket 3 SD card auto-backup
+
+local dictateTask = nil
+local state = "idle"  -- idle / recording / processing
+local liveCanvas = nil
+local liveTimer = nil
+local startTime = 0
+local sourceWindow = nil  -- remember where Ctrl+D was pressed
+local dictateScript = os.getenv("HOME") .. "/.hammerspoon/dictate.sh"
+local dictatePidFile = "/tmp/hs_dictate.pid"
+local dictateWatchdog = nil
+local dictateCancelled = false
+
+-- Stop `rec` by the PID it wrote, not by pkill pattern: a fast double-tap can
+-- fire before `rec` exists, and a pattern-matched signal is then lost forever.
+local function stopRecording()
+    local f = io.open(dictatePidFile, "r")
+    if f then
+        local pid = (f:read("*a") or ""):match("%d+")
+        f:close()
+        if pid then
+            os.execute("kill -INT " .. pid .. " 2>/dev/null")
+            return true
+        end
+    end
+    -- PID file not written yet: fall back to the pattern, then retry shortly.
+    os.execute("pkill -INT -f 'rec -q /tmp/hs_dictate.wav' 2>/dev/null")
+    return false
+end
+
+local function createOverlay()
+    local screen = hs.screen.mainScreen():frame()
+    local w, h = 300, 60
+    local x = (screen.w - w) / 2
+    local y = 60
+
+    liveCanvas = hs.canvas.new({x = x, y = y, w = w, h = h})
+    liveCanvas:appendElements(
+        {type = "rectangle", fillColor = {red = 0.8, green = 0.1, blue = 0.1, alpha = 0.9},
+         roundedRectRadii = {xRadius = 12, yRadius = 12}},
+        {type = "text", text = "🎤 Recording... 0s",
+         textColor = {red = 1, green = 1, blue = 1, alpha = 1},
+         textSize = 18, textAlignment = "center",
+         frame = {x = "0%", y = "15%", w = "100%", h = "70%"}}
+    )
+    liveCanvas:level(hs.canvas.windowLevels.overlay)
+    liveCanvas:show()
+
+    startTime = hs.timer.secondsSinceEpoch()
+    liveTimer = hs.timer.doEvery(1, function()
+        local elapsed = math.floor(hs.timer.secondsSinceEpoch() - startTime)
+        if liveCanvas and state == "recording" then
+            liveCanvas[2].text = "🎤 Recording... " .. elapsed .. "s"
+        end
+    end)
+end
+
+local function showProcessing()
+    if liveTimer then liveTimer:stop(); liveTimer = nil end
+    if liveCanvas then
+        liveCanvas[1].fillColor = {red = 0.2, green = 0.2, blue = 0.8, alpha = 0.9}
+        liveCanvas[2].text = "⏳ Processing..."
+    end
+end
+
+local function destroyOverlay()
+    if liveTimer then liveTimer:stop(); liveTimer = nil end
+    if liveCanvas then liveCanvas:delete(); liveCanvas = nil end
+end
+
+local function resetDictation()
+    if dictateWatchdog then dictateWatchdog:stop(); dictateWatchdog = nil end
+    destroyOverlay()
+    state = "idle"
+    dictateTask = nil
+end
+
+-- Paste without destroying the clipboard: dictation should not cost the user
+-- whatever they had copied.
+--
+-- Two dictations in quick succession must not chain: without this guard the
+-- second paste would "save" the first one's dictated text as the original and
+-- restore that instead of the user's real clipboard.
+local clipSaved = nil
+local clipRestoreTimer = nil
+
+local function pasteText(text)
+    if clipRestoreTimer then
+        -- A restore is still pending, so the clipboard currently holds the
+        -- previous dictation, not the user's content. Keep the original.
+        clipRestoreTimer:stop()
+        clipRestoreTimer = nil
+    else
+        clipSaved = hs.pasteboard.getContents()
+    end
+
+    local original = clipSaved
+    hs.pasteboard.setContents(text)
+    hs.eventtap.keyStroke({"cmd"}, "v")
+
+    clipRestoreTimer = hs.timer.doAfter(0.4, function()
+        clipRestoreTimer = nil
+        clipSaved = nil
+        if original then
+            hs.pasteboard.setContents(original)
+        end
+    end)
+end
+
+-- Wait for focus to actually land before pasting. A fixed 0.2s delay races with
+-- slow or cross-Space activation and can drop the text into the wrong window.
+local function focusThenPaste(win, text, attempt)
+    attempt = attempt or 1
+    local target = hs.window.focusedWindow()
+    if win and (not target or target:id() ~= win:id()) then
+        if attempt > 10 then  -- ~1s; window likely closed during recording
+            hs.pasteboard.setContents(text)
+            hs.alert.show("Dictation copied to clipboard (target window gone)", 3)
+            return
+        end
+        win:focus()
+        hs.timer.doAfter(0.1, function() focusThenPaste(win, text, attempt + 1) end)
+        return
+    end
+    pasteText(text)
+end
+
+local function cancelDictation()
+    if state ~= "recording" then return false end
+    dictateCancelled = true
+    stopRecording()
+    if dictateTask then dictateTask:terminate() end
+    resetDictation()
+    hs.alert.show("Dictation cancelled", 1)
+    return true
+end
+
+hs.hotkey.bind({"ctrl"}, "d", function()
+    if state == "processing" then
+        -- Ignore during processing
+        return
+    end
+
+    if state == "recording" then
+        -- Stop recording
+        state = "processing"
+        showProcessing()
+        if not stopRecording() then
+            -- PID file was not there yet; retry once the recorder has spawned.
+            hs.timer.doAfter(0.35, stopRecording)
+        end
+        return
+    end
+
+    -- Start recording - remember current window
+    state = "recording"
+    dictateCancelled = false
+    sourceWindow = hs.window.focusedWindow()
+    createOverlay()
+
+    dictateTask = hs.task.new("/bin/zsh", function(exitCode, stdout, stderr)
+        if dictateCancelled then return end
+
+        local text = ""
+        if stdout then
+            text = stdout:gsub("^%s+", ""):gsub("%s+$", "")
+        end
+
+        resetDictation()
+
+        -- Distinguish a real error from genuine silence: reporting a broken
+        -- setup as "no speech" sends the user hunting for a mic problem.
+        if exitCode ~= 0 and exitCode ~= 2 then
+            local msg = (stderr or ""):gsub("%s+$", "")
+            if msg == "" then msg = "exit " .. tostring(exitCode) end
+            hs.alert.show("Dictation error: " .. msg, 4)
+            return
+        end
+
+        if exitCode == 2 or text == "" then
+            hs.alert.show("No speech detected", 2)
+            return
+        end
+
+        -- Always wrap in <...>: the inline-comment convention applies everywhere,
+        -- not just terminals.
+        text = "<" .. text .. ">"
+
+        focusThenPaste(sourceWindow, text)
+    -- DICTATE_DEBUG=1 logs each run (timing, silence-gate decisions, and the
+    -- Gemini correction's before/after) to dictate.log. Set here rather than in a
+    -- shell rc because Hammerspoon's non-interactive zsh reads neither ~/.zshrc
+    -- nor ~/.zprofile -- the same trap that left v2's correction step silently
+    -- dead for months.
+    end, {"-c", "DICTATE_DEBUG=1 " .. dictateScript})
+
+    if not dictateTask:start() then
+        resetDictation()
+        hs.alert.show("Dictation failed to start", 3)
+        return
+    end
+
+    -- Watchdog: without this a hung transcription leaves state = "processing"
+    -- and Ctrl+D dead until a manual Hammerspoon reload.
+    dictateWatchdog = hs.timer.doAfter(330, function()
+        if state == "idle" then return end
+        stopRecording()
+        if dictateTask then dictateTask:terminate() end
+        resetDictation()
+        hs.alert.show("Dictation timed out - reset", 3)
+    end)
+end)
+
+-- Reload config
+hs.hotkey.bind({"cmd", "alt", "ctrl"}, "r", function()
+    os.execute("pkill -f 'rec -q /tmp/hs_dictate.wav' 2>/dev/null")
+    hs.reload()
+end)
+
+-- ESC handler: when a Claude-enlarged Terminal window exists, ESC restores it.
+-- Otherwise ESC passes through normally (vi mode, autocomplete dismissal, etc).
+-- Globals so we can inspect them via `hs -c`.
+claudeWindowStateDir = os.getenv("HOME") .. "/.claude/state/window_bounds"
+
+function anyClaudeEnlargedWindowExists()
+    local handle = io.popen("ls -A " .. claudeWindowStateDir .. " 2>/dev/null | head -1")
+    if not handle then return false end
+    local result = handle:read("*a") or ""
+    handle:close()
+    return result:len() > 0
+end
+
+claudeEscWatcher = hs.eventtap.new({hs.eventtap.event.types.keyDown}, function(event)
+    if event:getKeyCode() ~= 53 then return false end  -- 53 = ESC
+    local flags = event:getFlags()
+    if flags.cmd or flags.alt or flags.ctrl then
+        return false  -- modifier+ESC passes through
+    end
+
+    -- ESC while recording = throw the recording away, in any app.
+    if cancelDictation() then
+        return true
+    end
+
+    local frontApp = hs.application.frontmostApplication()
+    if not frontApp or frontApp:bundleID() ~= "com.apple.Terminal" then
+        return false
+    end
+
+    if not anyClaudeEnlargedWindowExists() then
+        return false
+    end
+
+    hs.alert.show("Claude window restoring...", 0.5)
+    os.execute(os.getenv("HOME") .. "/.claude/hooks/terminal_window_restore_all.sh &")
+    return true  -- consume ESC
+end)
+claudeEscWatcher:start()
+
+-- Claude Code 완료 알림 토글 메뉴바 (코드는 settings repo에서 로드, 모든 Mac 공통).
+pcall(dofile, os.getenv("HOME") .. "/.claude-local/hammerspoon/claude_notify_menubar.lua")  -- claude-notify-menubar
+
+hs.alert.show("Hammerspoon loaded")

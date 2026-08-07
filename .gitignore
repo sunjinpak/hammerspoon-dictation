@@ -1,1 +1,12 @@
 .DS_Store
+
+# Never commit: these hold recordings and transcripts of everything dictated,
+# plus the API key. The corpus is the whole point of v4's review loop, and it is
+# also the most sensitive thing the tool produces.
+.dictate_env
+corpus/
+glossary/
+dictate.log
+dictate.log.*
+*.flac
+*.wav
