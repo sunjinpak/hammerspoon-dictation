@@ -130,6 +130,44 @@ local function focusThenPaste(win, text, attempt)
     pasteText(text)
 end
 
+-- v6: what the user was looking at when they started talking, for the corrector.
+--
+-- The corrector sees one sentence and has to guess whether "프로덕션" is
+-- "production" or "prediction". The window in front of the user usually settles
+-- it: a Terminal showing a Claude conversation about a paper's introduction, a
+-- Word document titled with the manuscript's name. Captured at recording *start*
+-- (what prompted the utterance) and written to a file, since the text can be a
+-- few KB and this must not add latency to the paste.
+--
+-- Terminal.app is the only app whose visible text is read; other apps
+-- contribute just their name and window title. Owner-only file: screen text is
+-- as sensitive as the transcript.
+local ctxFile = "/tmp/hs_dictate.ctx"
+local function captureContext(win)
+    local ok, err = pcall(function()
+        local app = win and win:application()
+        local appName = app and app:name() or ""
+        local title = win and win:title() or ""
+        local lines = { "app: " .. appName, "window: " .. title }
+        if appName == "Terminal" then
+            local ok2, text = hs.osascript.applescript(
+                [[tell application "Terminal" to get contents of selected tab of front window]])
+            if ok2 and type(text) == "string" then
+                text = text:gsub("%s+\n", "\n")  -- drop trailing pad on each row
+                if #text > 1500 then text = text:sub(-1500) end
+                table.insert(lines, "screen:\n" .. text)
+            end
+        end
+        local f = io.open(ctxFile, "w")
+        if f then
+            f:write(table.concat(lines, "\n"))
+            f:close()
+            os.execute("chmod 600 " .. ctxFile)
+        end
+    end)
+    if not ok then os.remove(ctxFile) end
+end
+
 local function cancelDictation()
     if state ~= "recording" then return false end
     dictateCancelled = true
@@ -162,6 +200,7 @@ hs.hotkey.bind({"ctrl"}, "d", function()
     dictateCancelled = false
     sourceWindow = hs.window.focusedWindow()
     createOverlay()
+    captureContext(sourceWindow)
 
     dictateTask = hs.task.new("/bin/zsh", function(exitCode, stdout, stderr)
         if dictateCancelled then return end

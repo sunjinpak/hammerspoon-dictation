@@ -119,6 +119,15 @@ Two things make this more than "call an LLM on the output":
 
 Requires a [Gemini API key](https://aistudio.google.com/apikey). Leave it unset and v4 behaves exactly like v3.
 
+### v4.1 (2026-09): the corrector hears the audio and sees your screen
+
+Text-only correction has a ceiling: it cannot recover a word the recognizer destroyed (`설티제 리스테이킹` for *strategic risk taking*), and it has to guess between `production` and `prediction` from one sentence. Two additions remove most of that:
+
+- **Audio goes to the model alongside the draft transcript.** The draft anchors the output (audio-only transcription dropped trailing sentences and restyled punctuation in testing); the audio lets the model hear the English. Model is `gemini-3.5-flash`, thinking off (`thinkingLevel: minimal`; the 3.5 generation rejects `thinkingBudget`). Measured 1.0-2.3s per utterance versus ~1.0s text-only.
+- **Context from the window you were looking at when you pressed the hotkey**: app name, window title, and for Terminal.app the last 1500 characters of the visible screen, plus your last few dictations and the glossary's confirmed terms as vocabulary. Written by `init.lua` to a 0600 file at record start so it adds no latency at paste time.
+
+Both are on by default when a key is set and fall back to text-only correction if the audio is missing or too long. `DICTATE_FIX_AUDIO=0` / `DICTATE_FIX_CTX=0` turn them off individually. Note this sends your screen text to Google as well as your speech; the same privacy caveat as v4 applies, more so.
+
 ### v1: Single Whisper + optional Gemini correction
 
 ```

@@ -188,7 +188,10 @@ fi
 RAW_RESULT="$RESULT"  # kept for the corpus record: what the recognizer alone produced
 rm -f "$FIXSTATUS"
 if [ "${DICTATE_FIX:-1}" = "1" ] && [ -f "$HSDIR/dictate-fix.py" ]; then
-    FIXED=$(printf '%s' "$RESULT" | /usr/bin/python3 "$HSDIR/dictate-fix.py" 2>/dev/null)
+    # v6: the corrector also gets the audio (to hear the English the ko-KR
+    # engine wrote in Hangul) and the context init.lua captured at record start.
+    FIXED=$(printf '%s' "$RESULT" | DICTATE_AUDIO="$WAVFILE" DICTATE_CTX_FILE="/tmp/hs_dictate.ctx" \
+        /usr/bin/python3 "$HSDIR/dictate-fix.py" 2>/dev/null)
     # Sanitize again: the model's output is the thing that actually gets pasted,
     # and a rule-5 violation (answering instead of correcting) is exactly the
     # case that produces multi-line text.
