@@ -60,8 +60,32 @@ def items(include_reviewed=False):
             stem = name[:-5]
             rec["id"] = "%s/%s" % (day, stem)
             rec["audio"] = "/audio/%s/%s.flac" % (day, stem)
+            rec["weird"] = _weirdness(rec)
             out.append(rec)
+    # Weirdest first: the clips where the STT drifted furthest from the
+    # correction are where the glossary learns the most per review.
+    out.sort(key=lambda r: -r["weird"])
     return out
+
+
+def _weirdness(rec):
+    """How far the raw STT drifted. 0 = untouched sample.
+
+    Sum of characters that the correction replaced or removed (mostly
+    Hangul renderings of English), plus a bonus when the correction was
+    rejected by the plausibility gate -- those are the clips nobody has
+    checked at all.
+    """
+    raw, fixed = rec.get("raw") or "", rec.get("fixed") or ""
+    if not raw:
+        return 0
+    if rec.get("rejected"):
+        return len(raw) + 1000
+    if not rec.get("changed") or fixed == raw:
+        return 0
+    sm = difflib.SequenceMatcher(None, raw, fixed, autojunk=False)
+    changed = sum(i2 - i1 for tag, i1, i2, _, _ in sm.get_opcodes() if tag != "equal")
+    return changed
 
 
 # Korean particles cling to the end of a term, so a pair learned as
