@@ -63,7 +63,8 @@ def main():
         return
     inner = p[1:-1]
     comments = []
-    learned = []
+    learned = []   # went into glossary/terms.tsv (permanent)
+    context = []   # went into inline_learn.jsonl only (corrector context, last 10)
     for m in re.finditer(r"<([^<>]+)>", inner):
         before = inner[:m.start()].rstrip()
         words = re.sub(r"[.,!?]+$", "", before).split()
@@ -73,12 +74,22 @@ def main():
         n = len(re.split(r"[\s\-]+", comment)) if is_term(comment) else 1
         target = " ".join(words[-n:]) if words else ""
         comments.append({"target": target, "comment": comment})
-        if is_term(comment) and glossary_add(target, comment):
-            learned.append(f"{target} -> {comment}")
+        if is_term(comment):
+            if glossary_add(target, comment):
+                learned.append(f"{target} -> {comment}")
+            else:
+                context.append(f"{target} -> {comment} (용어집에 이미 있음)")
+        else:
+            context.append(f"{target} -> {comment}")
     if not comments:
         return
+    # Prof. Pak (2026-09-02): say what was learned and where, every time, not only for glossary hits.
+    msg = []
     if learned:
-        telegram("딕테이션 학습 완료 (용어집 등록)\n" + "\n".join(learned))
+        msg.append("용어집 등록 (영구):\n" + "\n".join(learned))
+    if context:
+        msg.append("교정 컨텍스트 반영 (최근 10건):\n" + "\n".join(context))
+    telegram("딕테이션 학습\n" + "\n".join(msg))
     clean = re.sub(r"<[^<>]+>", "", inner)
     clean = re.sub(r"\s{2,}", " ", clean).strip()
     rec = {"ts": time.strftime("%Y-%m-%d %H:%M:%S"), "outer": clean, "comments": comments}
