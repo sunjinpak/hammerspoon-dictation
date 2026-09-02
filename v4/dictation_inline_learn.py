@@ -27,6 +27,25 @@ def is_term(comment):
     return bool(TERM_RE.match(comment)) and len(comment.split()) <= 4
 
 
+# Words that mark an instruction about the text rather than a re-spoken version of it.
+INSTRUCTION_RE = re.compile(r"(빼|지워|삭제|넣어|바꿔|고쳐|해줘|하지 ?마|말고|이건|이거는|돼\.?$|됨)")
+
+
+def is_correction(target, comment):
+    """True when the nested bracket is the user re-saying the mis-heard words (2026-09-02:
+    '좋아서 좋았어요.<좋았어 좋았어>' is a correction, not context). English terms always are;
+    Korean is a correction when it is short, carries no instruction verb, and sounds like the
+    words it sits on (character overlap), so '그<"그" 이건 빼도되.>' stays context-only."""
+    if is_term(comment):
+        return True
+    if '"' in comment or INSTRUCTION_RE.search(comment) or len(comment.split()) > 6:
+        return False
+    if not target:
+        return False
+    from difflib import SequenceMatcher
+    return SequenceMatcher(None, target.replace(" ", ""), comment.replace(" ", "")).ratio() >= 0.45
+
+
 def glossary_add(target, comment):
     """Append 'target<TAB>comment' unless the same wrong-hearing is already listed."""
     if not target or not comment:
@@ -69,12 +88,17 @@ def main():
         before = inner[:m.start()].rstrip()
         words = re.sub(r"[.,!?]+$", "", before).split()
         comment = m.group(1).strip()
-        # A term usually replaces as many spoken words as it has (레그드 릴레이션십 -> lagged relationship).
-        # Hyphenated English is spoken as separate words (cross-lagged -> 크로스 레그드), so count them.
-        n = len(re.split(r"[\s\-]+", comment)) if is_term(comment) else 1
-        target = " ".join(words[-n:]) if words else ""
+        # A correction usually replaces as many spoken words as it has (레그드 릴레이션십 -> lagged
+        # relationship; 좋아서 좋았어요 -> 좋았어 좋았어). Hyphenated English is spoken as separate
+        # words (cross-lagged -> 크로스 레그드), so count those too.
+        n = len(re.split(r"[\s\-]+", comment))
+        span = " ".join(words[-n:]) if words else ""
+        if is_correction(span, comment):
+            target = span
+        else:
+            target = words[-1] if words else ""
         comments.append({"target": target, "comment": comment})
-        if is_term(comment):
+        if is_correction(target, comment):
             if glossary_add(target, comment):
                 learned.append(f"{target} -> {comment}")
             else:
