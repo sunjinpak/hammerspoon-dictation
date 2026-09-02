@@ -13,6 +13,19 @@ local startTime = 0
 local sourceWindow = nil  -- remember where Ctrl+D was pressed
 local dictateScript = os.getenv("HOME") .. "/.hammerspoon/dictate.sh"
 local dictatePidFile = "/tmp/hs_dictate.pid"
+
+-- Hotkey-level events go to the same log dictate.sh writes. Without this, a
+-- press that never reaches dictate.sh (ignored during processing, recorder not
+-- yet spawned) leaves no trace, and "dictation sometimes does nothing" cannot
+-- be diagnosed after the fact.
+local hsLogFile = os.getenv("HOME") .. "/.claude-local/hammerspoon/dictate.log"
+local function hslog(msg)
+    local f = io.open(hsLogFile, "a")
+    if f then
+        f:write(os.date("%Y-%m-%d %H:%M:%S") .. " hs: " .. msg .. "\n")
+        f:close()
+    end
+end
 local dictateWatchdog = nil
 local dictateCancelled = false
 
@@ -180,7 +193,10 @@ end
 
 hs.hotkey.bind({"ctrl"}, "d", function()
     if state == "processing" then
-        -- Ignore during processing
+        -- Cannot start a new one yet. Say so: a silently dropped press is
+        -- indistinguishable from a broken hotkey.
+        hslog("hotkey ignored: still processing")
+        hs.alert.show("Still processing previous dictation", 1)
         return
     end
 
@@ -189,13 +205,27 @@ hs.hotkey.bind({"ctrl"}, "d", function()
         state = "processing"
         showProcessing()
         if not stopRecording() then
-            -- PID file was not there yet; retry once the recorder has spawned.
-            hs.timer.doAfter(0.35, stopRecording)
+            -- PID file not there yet: `rec` has not spawned (opening a
+            -- Bluetooth input can take over a second). A single retry at
+            -- 0.35s used to be the only attempt; if it also missed, the
+            -- recorder ran on for up to 300s with the overlay stuck on
+            -- "Processing...". Retry until it appears, up to ~3s.
+            hslog("stop: recorder not spawned yet, retrying")
+            local tries = 0
+            local retry
+            retry = hs.timer.doEvery(0.25, function()
+                tries = tries + 1
+                if stopRecording() or state ~= "processing" or tries >= 12 then
+                    retry:stop()
+                    if tries >= 12 then hslog("stop: gave up after 3s, watchdog will reset") end
+                end
+            end)
         end
         return
     end
 
     -- Start recording - remember current window
+    hslog("start")
     state = "recording"
     dictateCancelled = false
     sourceWindow = hs.window.focusedWindow()
@@ -217,11 +247,13 @@ hs.hotkey.bind({"ctrl"}, "d", function()
         if exitCode ~= 0 and exitCode ~= 2 then
             local msg = (stderr or ""):gsub("%s+$", "")
             if msg == "" then msg = "exit " .. tostring(exitCode) end
+            hslog("error: " .. msg)
             hs.alert.show("Dictation error: " .. msg, 4)
             return
         end
 
         if exitCode == 2 or text == "" then
+            hslog("no speech (exit " .. tostring(exitCode) .. ")")
             hs.alert.show("No speech detected", 2)
             return
         end
@@ -248,6 +280,7 @@ hs.hotkey.bind({"ctrl"}, "d", function()
     -- and Ctrl+D dead until a manual Hammerspoon reload.
     dictateWatchdog = hs.timer.doAfter(330, function()
         if state == "idle" then return end
+        hslog("watchdog reset from state=" .. state)
         stopRecording()
         if dictateTask then dictateTask:terminate() end
         resetDictation()
