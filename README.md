@@ -22,7 +22,7 @@ You get:   pasted into Slack / Mail / VS Code / Notes / wherever
 
 macOS has built-in dictation, but it is modal: you click into a field, trigger it, and it owns the input while it runs. This tool is a hotkey that drops text wherever your cursor already is, in any app, and then gets out of the way.
 
-It also does the boring-but-necessary parts that a five-line script skips: it refuses to paste when you did not actually say anything, it does not clobber your clipboard, it cancels cleanly, and it cannot get stuck in a state where the hotkey stops responding.
+It also does the boring-but-necessary parts that a five-line script skips: it refuses to paste when you did not actually say anything, it keeps the dictated text on the clipboard so a missed paste is one Cmd+V away (or, if you prefer, restores your previous clipboard), it cancels cleanly, and it cannot get stuck in a state where the hotkey stops responding.
 
 ---
 
@@ -130,6 +130,10 @@ Text-only correction has a ceiling: it cannot recover a word the recognizer dest
 
 Both are on by default when a key is set and fall back to text-only correction if the audio is missing or too long. `DICTATE_FIX_AUDIO=0` / `DICTATE_FIX_CTX=0` turn them off individually. Note this sends your screen text to Google as well as your speech; the same privacy caveat as v4 applies, more so.
 
+### v4.2 (2026-09-02): clipboard, history, faster recovery
+
+Three small changes from daily use. The dictated text now stays on the clipboard after the paste (a missed paste used to vanish 0.4s later; toggle with `KEEP_DICTATION_IN_CLIPBOARD`). `Ctrl+Shift+D` shows a searchable history of past dictations and copies the one you pick. And a recorder that fails to start resets the hotkey in 3 seconds instead of 5 minutes. `init.lua` also logs which app each paste went to, so "it pasted into the wrong window" is diagnosable afterwards.
+
 ### v1: Single Whisper + optional Gemini correction
 
 ```
@@ -151,7 +155,9 @@ These are the failure modes that make a dictation tool annoying in daily use. Ea
 | Behavior | Why it matters |
 |---|---|
 | **Energy gate before transcribing** | Both whisper and the Apple engine invent text from near-silence. Whisper reliably emits `감사합니다` (Korean "thank you") on a silent recording. An accidental double-tap would otherwise paste words you never said. Gated on `sox` RMS with peak-amplitude and byte-size fallbacks, and it logs loudly rather than silently disabling itself. |
-| **Clipboard is preserved** | Dictation should not cost you whatever you had copied. Saved and restored around the paste, with a guard so two dictations in quick succession cannot chain and restore the wrong value. |
+| **Dictation stays on the clipboard** | A paste can miss (focus glitch, slow app). Since v4.2 the text stays on the clipboard so you just press Cmd+V, instead of dictating again. Set `KEEP_DICTATION_IN_CLIPBOARD = false` in `init.lua` to get the old behavior back: previous clipboard saved and restored around the paste, with a guard so two quick dictations cannot chain. |
+| **History viewer** | `Ctrl+Shift+D` opens a searchable list of everything you dictated (from `dictate.log`, newest first). Enter copies the entry to the clipboard. `v4/dictate-history.sh [N] [YYYY-MM-DD]` prints the same from a terminal. |
+| **Recorder-failure reset** | If `rec` never spawns (Bluetooth mic waking up, a reload mid-press), the stop attempt gives up after 3s and resets immediately with an alert. Before v4.2 this waited for the 330s watchdog and the hotkey looked dead for five minutes. |
 | **PID-based stop** | Signalling `rec` via `pkill` pattern-matching loses the signal if you double-tap before `rec` has spawned, which hangs the tool permanently. v3 signals the exact PID, with a retry. |
 | **Watchdog** | A hung transcription can no longer leave the hotkey dead until a manual reload. |
 | **ESC cancels** | Discards the recording without transcribing or pasting. |

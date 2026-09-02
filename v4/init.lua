@@ -3,7 +3,7 @@
 --   Ctrl+D again = stop and paste. ESC while recording = cancel.
 
 require("hs.ipc")
-require("sd-backup")  -- DJI Pocket 3 SD card auto-backup
+pcall(require, "sd-backup")  -- optional personal module (DJI SD card backup); absent on other machines
 
 local dictateTask = nil
 local state = "idle"  -- idle / recording / processing
@@ -93,35 +93,39 @@ local function resetDictation()
     dictateTask = nil
 end
 
--- Paste without destroying the clipboard: dictation should not cost the user
--- whatever they had copied.
+-- Paste, then either keep the dictated text in the clipboard or restore what was there.
 --
--- Two dictations in quick succession must not chain: without this guard the
--- second paste would "save" the first one's dictated text as the original and
--- restore that instead of the user's real clipboard.
+-- KEEP_DICTATION_IN_CLIPBOARD = true (default since 2026-09-02): a paste that fails to land
+-- (focus glitch, slow app) is one Cmd+V away instead of a re-dictation. Cost: the dictation
+-- overwrites whatever you had copied.
+-- false: the previous clipboard is restored 0.4s after the paste, with a guard so two quick
+-- dictations cannot chain and restore the first one's text instead of your real content.
+local KEEP_DICTATION_IN_CLIPBOARD = true
 local clipSaved = nil
 local clipRestoreTimer = nil
 
 local function pasteText(text)
+    local app = hs.application.frontmostApplication()
+    hslog("paste -> " .. (app and app:name() or "?") .. " (" .. #text .. " chars"
+          .. (KEEP_DICTATION_IN_CLIPBOARD and ", kept in clipboard)" or ")"))
+    if KEEP_DICTATION_IN_CLIPBOARD then
+        hs.pasteboard.setContents(text)
+        hs.eventtap.keyStroke({"cmd"}, "v")
+        return
+    end
     if clipRestoreTimer then
-        -- A restore is still pending, so the clipboard currently holds the
-        -- previous dictation, not the user's content. Keep the original.
         clipRestoreTimer:stop()
         clipRestoreTimer = nil
     else
         clipSaved = hs.pasteboard.getContents()
     end
-
     local original = clipSaved
     hs.pasteboard.setContents(text)
     hs.eventtap.keyStroke({"cmd"}, "v")
-
     clipRestoreTimer = hs.timer.doAfter(0.4, function()
         clipRestoreTimer = nil
         clipSaved = nil
-        if original then
-            hs.pasteboard.setContents(original)
-        end
+        if original then hs.pasteboard.setContents(original) end
     end)
 end
 
@@ -217,7 +221,14 @@ hs.hotkey.bind({"ctrl"}, "d", function()
                 tries = tries + 1
                 if stopRecording() or state ~= "processing" or tries >= 12 then
                     retry:stop()
-                    if tries >= 12 then hslog("stop: gave up after 3s, watchdog will reset") end
+                    if tries >= 12 then
+                        -- 2026-09-02: leaving this to the 330s watchdog kept Ctrl+D dead for
+                        -- over 4 minutes ("hotkey ignored: still processing" x10). Reset now.
+                        hslog("stop: recorder never spawned, resetting now")
+                        if dictateTask then dictateTask:terminate() end
+                        resetDictation()
+                        hs.alert.show("Recorder did not start - press Ctrl+D again", 3)
+                    end
                 end
             end)
         end
@@ -287,6 +298,33 @@ hs.hotkey.bind({"ctrl"}, "d", function()
         hs.alert.show("Dictation timed out - reset", 3)
     end)
 end)
+
+-- Dictation history (2026-09-02): Ctrl+Shift+D (or a menubar item that calls showDictationHistory) lists the
+-- final text of recent dictations from dictate.log, newest first. Typing filters; choosing an
+-- entry copies it to the clipboard so a missed paste can be redone without re-dictating.
+function showDictationHistory()
+    local f = io.open(hsLogFile, "r")
+    if not f then hs.alert.show("dictate.log not found", 2) return end
+    local rows = {}
+    for line in f:lines() do
+        local ts, text = line:match("^(%d%d%d%d%-%d%d%-%d%d %d%d:%d%d:%d%d) OK: (.+)$")
+        if ts then table.insert(rows, 1, { text = text, subText = ts }) end
+        if #rows > 300 then table.remove(rows) end
+    end
+    f:close()
+    if #rows == 0 then hs.alert.show("No dictations logged yet", 2) return end
+    local chooser = hs.chooser.new(function(choice)
+        if choice then
+            hs.pasteboard.setContents(choice.text)
+            hs.alert.show("Copied: " .. choice.text:sub(1, 40), 2)
+        end
+    end)
+    chooser:placeholderText("Dictation history: type to search, Enter copies to clipboard")
+    chooser:searchSubText(true)
+    chooser:choices(rows)
+    chooser:show()
+end
+hs.hotkey.bind({"ctrl", "shift"}, "d", showDictationHistory)
 
 -- Reload config
 hs.hotkey.bind({"cmd", "alt", "ctrl"}, "r", function()
